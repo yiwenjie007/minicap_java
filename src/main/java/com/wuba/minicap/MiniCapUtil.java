@@ -1,26 +1,23 @@
 /**
- * 
+ *
  */
 package com.wuba.minicap;
 
 import java.awt.Image;
 import java.awt.Toolkit;
 import java.awt.image.BufferedImage;
-import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.net.Socket;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Observer;
 import java.util.Queue;
 import java.util.concurrent.LinkedBlockingQueue;
-
 import javax.imageio.ImageIO;
-
+import com.wuba.utils.Constant;
+import com.wuba.utils.TimeUtil;
 import org.apache.log4j.Logger;
 
 import com.android.ddmlib.AdbCommandRejectedException;
@@ -30,13 +27,8 @@ import com.android.ddmlib.IDevice.DeviceUnixSocketNamespace;
 import com.android.ddmlib.ShellCommandUnresponsiveException;
 import com.android.ddmlib.SyncException;
 import com.android.ddmlib.TimeoutException;
-import com.wuba.utils.Constant;
-import com.wuba.utils.TimeUtil;
 
-/**
- * @author hui.qian qianhui@58.com
- * @date 2015年8月12日 上午11:02:53
- */
+
 public class MiniCapUtil implements ScreenSubject {
 	private static final Logger LOG = Logger.getLogger(MiniCapUtil.class);
 	// CPU架构的种类
@@ -49,19 +41,29 @@ public class MiniCapUtil implements ScreenSubject {
 	private List<AndroidScreenObserver> observers = new ArrayList<AndroidScreenObserver>();
 
 	private Banner banner = new Banner();
-	private static final int PORT = 1717;
+	private static final int CAP_PORT = 1717;
+	private static final int TOUCH_PORT = 1111;
 	private Socket socket;
 	private IDevice device;
 	private String REMOTE_PATH = "/data/local/tmp";
 	private String ABI_COMMAND = "ro.product.cpu.abi";
 	private String SDK_COMMAND = "ro.build.version.sdk";
 	private String MINICAP_BIN = "minicap";
+	private String MINITOUCH_BIN = "minitouch";
+	private String MINICAP_NOPIE = "minicap-nopie";
+	private String MINICAP_FILE = "";
+	private String MINITOUCH_NOPIE = "minitouch-nopie";
+	private String MINITOUCH_FILE = "";
+
 	private String MINICAP_SO = "minicap.so";
 	private String MINICAP_CHMOD_COMMAND = "chmod 777 %s/%s";
 	private String MINICAP_WM_SIZE_COMMAND = "wm size";
-	private String MINICAP_START_COMMAND = "LD_LIBRARY_PATH=/data/local/tmp /data/local/tmp/minicap -P %s@%s/0";
-	private String MINICAP_TAKESCREENSHOT_COMMAND = "LD_LIBRARY_PATH=/data/local/tmp /data/local/tmp/minicap -P %s@%s/0 -s >%s";
-	private String ADB_PULL_COMMAND = "adb -s %s pull %s %s";
+	private String MINICAP_START_COMMAND = "LD_LIBRARY_PATH=/data/local/tmp /data/local/tmp/%s -P %s@%s/0";
+	private String MINITOUCH_START_COMMAND = "/data/local/tmp/%s";
+	private String MINICAP_TAKESCREENSHOT_COMMAND = "LD_LIBRARY_PATH=/data/local/tmp /data/local/tmp/%s -P %s@%s/0 -s >%s";
+	private String ADB_PULL_COMMAND = " adb -s %s pull %s %s";
+
+
 	private boolean isRunning = false;
 	private String size;
 
@@ -78,33 +80,58 @@ public class MiniCapUtil implements ScreenSubject {
 		}
 		return false;
 	}
-	
+
 	/**
 	 * 将minicap的二进制和.so文件push到/data/local/tmp文件夹下，启动minicap服务
 	 */
 	private void init() {
 
-		String abi = device.getProperty(ABI_COMMAND);
+		String abi = null;
+		while (abi==null){
+			abi = device.getProperty(ABI_COMMAND);
+			System.out.println(abi);
+		}
+
 		String sdk = device.getProperty(SDK_COMMAND);
+		if (Integer.parseInt(sdk) < 16) {
+			MINITOUCH_FILE = MINITOUCH_NOPIE;
+			MINICAP_FILE = MINICAP_NOPIE;
+		}else {
+			MINITOUCH_FILE = MINITOUCH_BIN;
+			MINICAP_FILE = MINICAP_BIN;
+		}
+		System.out.println("获取abi 信息以及系统的sdk为abi:"+abi+"sdk:"+sdk);
 		File minicapBinFile = new File(Constant.getMinicapBin(), abi
-				+ File.separator + MINICAP_BIN);
+				+ File.separator + MINICAP_FILE);
+		File minitouchBinFile = new File(Constant.getMiniTouchBin(), abi
+				+ File.separator + MINITOUCH_FILE);
 		File minicapSoFile = new File(Constant.getMinicapSo(), "android-" + sdk
 				+ File.separator + abi + File.separator + MINICAP_SO);
+		System.out.println(minicapSoFile.getAbsolutePath());
 		try {
 			// 将minicap的可执行文件和.so文件一起push到设备中
 			device.pushFile(minicapBinFile.getAbsolutePath(), REMOTE_PATH
-					+ File.separator + MINICAP_BIN);
+					+ File.separator + MINICAP_FILE);
+			device.pushFile(minitouchBinFile.getAbsolutePath(), REMOTE_PATH
+					+ File.separator + MINITOUCH_FILE);
 			device.pushFile(minicapSoFile.getAbsolutePath(), REMOTE_PATH
 					+ File.separator + MINICAP_SO);
 			executeShellCommand(String.format(MINICAP_CHMOD_COMMAND,
-					REMOTE_PATH, MINICAP_BIN));
+					REMOTE_PATH, MINICAP_FILE));
+			executeShellCommand(String.format(MINICAP_CHMOD_COMMAND,
+					REMOTE_PATH, MINITOUCH_FILE));
 			// 端口转发
-			device.createForward(PORT, "minicap",
+			device.createForward(CAP_PORT, "minicap",
+					DeviceUnixSocketNamespace.ABSTRACT);
+
+			// 端口转发
+			device.createForward(TOUCH_PORT, "minitouch",
 					DeviceUnixSocketNamespace.ABSTRACT);
 
 			// 获取设备屏幕的尺寸
 			String output = executeShellCommand(MINICAP_WM_SIZE_COMMAND);
 			size = output.split(":")[1].trim();
+
 		} catch (SyncException e) {
 			// TODO Auto-generated catch block
 			e.printStackTrace();
@@ -123,7 +150,7 @@ public class MiniCapUtil implements ScreenSubject {
 	public void takeScreenShotOnce() {
 		String savePath = "/data/local/tmp/screenshot.jpg";
 		String takeScreenShotCommand = String.format(
-				MINICAP_TAKESCREENSHOT_COMMAND, size,
+				MINICAP_TAKESCREENSHOT_COMMAND, MINICAP_FILE,size,
 				size, savePath);
 		String localPath = System.getProperty("user.dir") + "/screenshot.jpg";
 		String pullCommand = String.format(ADB_PULL_COMMAND,
@@ -141,7 +168,8 @@ public class MiniCapUtil implements ScreenSubject {
 			// }
 			// Thread.sleep(200);
 			// process.waitFor();
-			Runtime.getRuntime().exec(pullCommand);
+
+			//Runtime.getRuntime().exec(pullCommand);
 		} catch (IOException e) {
 			// TODO Auto-generated catch block
 			e.printStackTrace();
@@ -200,7 +228,60 @@ public class MiniCapUtil implements ScreenSubject {
 		frame.start();
 		Thread convert = new Thread(new ImageConverter());
 		convert.start();
+		Thread touch = new Thread(new TouchThread());
+		touch.start();
+
+
+//		 new Thread(new Runnable() {
+//
+//				@Override
+//				public void run() {
+//					// TODO Auto-generated method stub
+//					  //Scanner sc = new Scanner(System.in);
+//				        //利用hasNextXXX()判断是否还有下一输入项
+//				        while (true) {
+//
+//				            //利用nextXXX()方法输出内容
+//				          //  String str = sc.next();
+//				        	String str ="你我";
+//				        		str  = encode(str);
+//
+//
+//				           String result = "am broadcast -a ADB_INPUT_TEXT --es msg \'"+str+"\'";
+//
+//
+//				           System.out.println(":"+str);
+//				          executeShellCommand(result);
+//
+//				        }
+//				}
+//			}).start();
 	}
+
+
+	public static String encode(String str) {
+		String prifix = "\\u";
+		StringBuffer unicode = new StringBuffer();
+		for (int i = 0; i < str.length(); i++) {
+			char c = str.charAt(i);
+			String code = prifix + format(Integer.toHexString(c));
+			unicode.append(code);
+		}
+		return unicode.toString();
+	}
+
+
+	/**
+	 * 为长度不足4位的unicode 值补零
+	 * @param str
+	 * @return
+	 */
+	private static String format(String str) {
+		for ( int i=0, l=4-str.length(); i<l; i++ )
+			str = "0" + str;
+		return str;
+	}
+
 
 	public void stopScreenListener() {
 		isRunning = false;
@@ -264,22 +345,23 @@ public class MiniCapUtil implements ScreenSubject {
 			try {
 
 				final String startCommand = String.format(
-						MINICAP_START_COMMAND, size, size);
+						MINICAP_START_COMMAND, MINICAP_FILE,size, size);
 				// 启动minicap服务
 				new Thread(new Runnable() {
 					public void run() {
 						LOG.info("minicap服务器启动 : " + startCommand);
 						executeShellCommand(startCommand);
+
 					}
 				}).start();
 				try {
-					Thread.sleep(1 * 1000);
+					Thread.sleep(2 * 1000);
 				} catch (InterruptedException e) {
 					// TODO Auto-generated catch block
 					e.printStackTrace();
 				}
 
-				socket = new Socket("localhost", PORT);
+				socket = new Socket("localhost", CAP_PORT);
 				stream = socket.getInputStream();
 				// input = new DataInputStream(stream);
 				int len = 4096;
@@ -287,10 +369,13 @@ public class MiniCapUtil implements ScreenSubject {
 					byte[] buffer;
 					buffer = new byte[len];
 					int realLen = stream.read(buffer);
-					if (buffer.length != realLen) {
+					if (buffer.length != realLen && realLen >= 0) {
 						buffer = subByteArray(buffer, 0, realLen);
+
 					}
-					dataQueue.add(buffer);
+					if(realLen >= 0) {
+						dataQueue.add(buffer);
+					}
 
 				}
 			} catch (IOException e) {
@@ -318,16 +403,27 @@ public class MiniCapUtil implements ScreenSubject {
 
 	}
 
+
+	class TouchThread implements Runnable {
+		@Override
+		public void run() {
+			String startCmd = String.format(MINITOUCH_START_COMMAND,MINITOUCH_FILE);
+			System.out.println(startCmd);
+			executeShellCommand(startCmd);
+		}
+	}
+
+
 	class ImageConverter implements Runnable {
 		private int readBannerBytes = 0;
-		private int bannerLength = 2;
-		private int readFrameBytes = 0;
-		private int frameBodyLength = 0;
+		private int bannerLength = 2;//头的长度
+		private int readFrameBytes = 0;//已读byte长度
+		private int frameBodyLength = 0;//图片的byte长度
 		private byte[] frameBody = new byte[0];
 
 		/*
 		 * (non-Javadoc)
-		 * 
+		 *
 		 * @see java.lang.Runnable#run()
 		 */
 		public void run() {
@@ -340,17 +436,20 @@ public class MiniCapUtil implements ScreenSubject {
 				}
 				byte[] buffer = dataQueue.poll();
 				int len = buffer.length;
+				System.out.println("长度："+len);
 				for (int cursor = 0; cursor < len;) {
 					int byte10 = buffer[cursor] & 0xff;
-					if (readBannerBytes < bannerLength) {
+					if (readBannerBytes < bannerLength) {//第一次进来读取头部信息
 						cursor = parserBanner(cursor, byte10);
-					} else if (readFrameBytes < 4) {
+					} else if (readFrameBytes < 4) {//读取并设置图片的大小
 						// 第二次的缓冲区中前4位数字和为frame的缓冲区大小
 						frameBodyLength += (byte10 << (readFrameBytes * 8)) >>> 0;
 						cursor += 1;
 						readFrameBytes += 1;
 						// LOG.debug("解析图片大小 = " + readFrameBytes);
 					} else {
+
+						System.out.println("len:"+len+"cursor:"+cursor+"frameBodyLength:"+frameBodyLength);
 						if (len - cursor >= frameBodyLength) {
 							LOG.debug("frameBodyLength = " + frameBodyLength);
 							byte[] subByte = subByteArray(buffer, cursor,
@@ -361,6 +460,8 @@ public class MiniCapUtil implements ScreenSubject {
 										.format("Frame body does not start with JPG header"));
 								return;
 							}
+
+							System.out.println("JPG头: "+frameBody[0]+","+frameBody[1]);
 							final byte[] finalBytes = subByteArray(frameBody,
 									0, frameBody.length);
 							// 转化成bufferImage
@@ -375,14 +476,15 @@ public class MiniCapUtil implements ScreenSubject {
 							}).start();
 
 							long current = System.currentTimeMillis();
-							LOG.info("图片已生成,耗时: "
+
+							System.out.println("图片已生成,耗时: "
 									+ TimeUtil.formatElapsedTime(current
-											- start));
+									- start));
 							start = current;
 							cursor += frameBodyLength;
 							restore();
 						} else {
-							LOG.debug("所需数据大小 : " + frameBodyLength);
+							System.out.println("所需数据大小 : " + frameBodyLength);
 							byte[] subByte = subByteArray(buffer, cursor, len);
 							frameBody = byteMerger(frameBody, subByte);
 							frameBodyLength -= (len - cursor);
@@ -403,69 +505,72 @@ public class MiniCapUtil implements ScreenSubject {
 
 		private int parserBanner(int cursor, int byte10) {
 			switch (readBannerBytes) {
-			case 0:
-				// version
-				banner.setVersion(byte10);
-				break;
-			case 1:
-				// length
-				bannerLength = byte10;
-				banner.setLength(byte10);
-				break;
-			case 2:
-			case 3:
-			case 4:
-			case 5:
-				// pid
-				int pid = banner.getPid();
-				pid += (byte10 << ((readBannerBytes - 2) * 8)) >>> 0;
-				banner.setPid(pid);
-				break;
-			case 6:
-			case 7:
-			case 8:
-			case 9:
-				// real width
-				int realWidth = banner.getReadWidth();
-				realWidth += (byte10 << ((readBannerBytes - 6) * 8)) >>> 0;
-				banner.setReadWidth(realWidth);
-				break;
-			case 10:
-			case 11:
-			case 12:
-			case 13:
-				// real height
-				int realHeight = banner.getReadHeight();
-				realHeight += (byte10 << ((readBannerBytes - 10) * 8)) >>> 0;
-				banner.setReadHeight(realHeight);
-				break;
-			case 14:
-			case 15:
-			case 16:
-			case 17:
-				// virtual width
-				int virtualWidth = banner.getVirtualWidth();
-				virtualWidth += (byte10 << ((readBannerBytes - 14) * 8)) >>> 0;
-				banner.setVirtualWidth(virtualWidth);
-
-				break;
-			case 18:
-			case 19:
-			case 20:
-			case 21:
-				// virtual height
-				int virtualHeight = banner.getVirtualHeight();
-				virtualHeight += (byte10 << ((readBannerBytes - 18) * 8)) >>> 0;
-				banner.setVirtualHeight(virtualHeight);
-				break;
-			case 22:
-				// orientation
-				banner.setOrientation(byte10 * 90);
-				break;
-			case 23:
-				// quirks
-				banner.setQuirks(byte10);
-				break;
+				case 0:
+					// version
+					banner.setVersion(byte10);
+					break;
+				case 1:
+					// length
+					bannerLength = byte10;
+					banner.setLength(byte10);
+					break;
+				case 2:
+				case 3:
+				case 4:
+				case 5:
+					// pid
+					int pid = banner.getPid();
+					pid += (byte10 << ((readBannerBytes - 2) * 8)) >>> 0;
+					banner.setPid(pid);
+					break;
+				case 6:
+				case 7:
+				case 8:
+				case 9:
+					// real width
+					int realWidth = banner.getReadWidth();
+					System.out.println("realwidth0"+realWidth);
+					realWidth += (byte10 << ((readBannerBytes - 6) * 8)) >>> 0;
+					System.out.println("realwidth1"+realWidth);
+					banner.setReadWidth(realWidth);
+					break;
+				case 10:
+				case 11:
+				case 12:
+				case 13:
+					// real height
+					int realHeight = banner.getReadHeight();
+					realHeight += (byte10 << ((readBannerBytes - 10) * 8)) >>> 0;
+					banner.setReadHeight(realHeight);
+					break;
+				case 14:
+				case 15:
+				case 16:
+				case 17:
+					// virtual width
+					int virtualWidth = banner.getVirtualWidth();
+					virtualWidth += (byte10 << ((readBannerBytes - 14) * 8)) >>> 0;
+					banner.setVirtualWidth(virtualWidth);
+					System.out.println("virtual"+virtualWidth);
+					break;
+				case 18:
+				case 19:
+				case 20:
+				case 21:
+					// virtual height
+					int virtualHeight = banner.getVirtualHeight();
+					virtualHeight += (byte10 << ((readBannerBytes - 18) * 8)) >>> 0;
+					banner.setVirtualHeight(virtualHeight);
+					System.out.println("virtualhegith"+virtualHeight);
+					break;
+				case 22:
+					// orientation
+					banner.setOrientation(byte10 * 90);
+					break;
+				case 23:
+					// quirks
+					banner.setQuirks(byte10);
+					break;
 			}
 
 			cursor += 1;
@@ -481,7 +586,7 @@ public class MiniCapUtil implements ScreenSubject {
 
 	/*
 	 * (non-Javadoc)
-	 * 
+	 *
 	 * @see
 	 * com.wuba.utils.screenshot.ScreenSubject#registerObserver(com.wuba.utils
 	 * .screenshot.AndroidScreenObserver)
@@ -494,7 +599,7 @@ public class MiniCapUtil implements ScreenSubject {
 
 	/*
 	 * (non-Javadoc)
-	 * 
+	 *
 	 * @see
 	 * com.wuba.utils.screenshot.ScreenSubject#removeObserver(com.wuba.utils
 	 * .screenshot.AndroidScreenObserver)
@@ -509,7 +614,7 @@ public class MiniCapUtil implements ScreenSubject {
 
 	/*
 	 * (non-Javadoc)
-	 * 
+	 *
 	 * @see com.wuba.minicap.ScreenSubject#notifyObservers(java.awt.Image)
 	 */
 	@Override

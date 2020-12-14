@@ -20,6 +20,10 @@ public class Constant {
 		return new File(ROOT, "minicap/bin");
 	}
 
+	public static File getMiniTouchBin() {
+		return new File(ROOT, "minitouch");
+	}
+
 	public static File getMinicapSo() {
 		return new File(ROOT, "minicap/shared");
 	}

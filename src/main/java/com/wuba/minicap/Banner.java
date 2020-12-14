@@ -1,12 +1,9 @@
 /**
- * 
+ *
  */
 package com.wuba.minicap;
 
-/**
- * @author hui.qian qianhui@58.com
- * @date 2015年8月10日 下午4:29:42
- */
+
 public class Banner {
 	@Override
 	public String toString() {
@@ -70,6 +67,39 @@ public class Banner {
 	public void setQuirks(int quirks) {
 		this.quirks = quirks;
 	}
+
+	public int getMaxX() {
+		return maxX;
+	}
+
+	public void setMaxX(int maxX) {
+		this.maxX = maxX;
+	}
+
+	public int getMaxY() {
+		return maxY;
+	}
+
+	public void setMaxY(int maxY) {
+		this.maxY = maxY;
+	}
+
+	public int getMaxPoint() {
+		return maxPoint;
+	}
+
+	public void setMaxPoint(int maxPoint) {
+		this.maxPoint = maxPoint;
+	}
+
+	public int getMaxPress() {
+		return maxPress;
+	}
+
+	public void setMaxPress(int maxPress) {
+		this.maxPress = maxPress;
+	}
+
 	private int version;
 	private int length;
 	private int pid;
@@ -79,7 +109,12 @@ public class Banner {
 	private int virtualHeight;
 	private int orientation;
 	private int quirks;
-	
-	
-	
+	private int maxX;
+	private int maxY;
+	private int maxPoint;
+	private int maxPress;
+
+
+
+
 }
